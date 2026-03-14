@@ -28,6 +28,29 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 @keyframes modalIn{from{opacity:0;transform:scale(0.94) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+/* LOADING */
+#loadingScreen{
+  position:fixed;inset:0;background:var(--bg);z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+}
+.spinner{width:36px;height:36px;border:3px solid rgba(0,212,170,0.15);border-top-color:var(--green);border-radius:50%;animation:spin 0.8s linear infinite}
+.loading-text{font-family:'Syne',sans-serif;font-weight:700;font-size:14px;color:var(--muted)}
+
+/* INDICADOR ONLINE */
+#statusOnline{
+  position:fixed;top:8px;left:50%;transform:translateX(-50%);
+  background:rgba(0,212,170,0.12);border:1px solid rgba(0,212,170,0.2);
+  color:var(--green);border-radius:50px;padding:4px 12px;
+  font-family:'Syne',sans-serif;font-weight:600;font-size:11px;
+  z-index:200;display:flex;align-items:center;gap:6px;
+  transition:all 0.3s;opacity:0;pointer-events:none;
+}
+#statusOnline.visivel{opacity:1}
+#statusOnline.offline{background:rgba(255,77,106,0.12);border-color:rgba(255,77,106,0.2);color:var(--red)}
+.dot-online{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dot-online.offline{background:var(--red)}
 
 /* HEADER */
 #header{
@@ -303,6 +326,18 @@ select.form-input option{background:#1a2030;color:var(--text)}
 </head>
 <body>
 
+<!-- LOADING -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <div class="loading-text">Conectando ao banco de dados...</div>
+</div>
+
+<!-- STATUS ONLINE -->
+<div id="statusOnline">
+  <div class="dot-online" id="dotOnline"></div>
+  <span id="textoOnline">Sincronizado</span>
+</div>
+
 <!-- HEADER -->
 <header id="header">
   <button class="btn-mes" id="btnMesAnterior">‹</button>
@@ -350,7 +385,6 @@ select.form-input option{background:#1a2030;color:var(--text)}
 
 <!-- GRÁFICOS -->
 <div class="grid-graficos">
-  <!-- Gráfico de Barras -->
   <div class="chart-card">
     <div class="chart-title">2026 — Visão anual</div>
     <div id="chartBarras"></div>
@@ -360,7 +394,6 @@ select.form-input option{background:#1a2030;color:var(--text)}
       <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Investimentos</div>
     </div>
   </div>
-  <!-- Gráfico Donut -->
   <div class="chart-card">
     <div class="chart-title">Distribuição de despesas</div>
     <div id="chartDonut"></div>
@@ -439,10 +472,6 @@ select.form-input option{background:#1a2030;color:var(--text)}
       <label class="form-label" for="selectSocio">Sócio Responsável</label>
       <select class="form-input" id="selectSocio">
         <option value="Geral">Geral (empresa)</option>
-        <option value="Sócio 1">Sócio 1</option>
-        <option value="Sócio 2">Sócio 2</option>
-        <option value="Sócio 3">Sócio 3</option>
-        <option value="Sócio 4">Sócio 4</option>
       </select>
     </div>
     <div class="form-group">
@@ -496,26 +525,34 @@ select.form-input option{background:#1a2030;color:var(--text)}
 <!-- TOAST -->
 <div id="toast"></div>
 
-<script>
+<!-- FIREBASE SDK -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getDatabase, ref, push, set, update, remove, onValue, off } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
 // ============================================================
-// DADOS — LOCALSTORAGE
+// FIREBASE CONFIG
 // ============================================================
-const CHAVE_LANCAMENTOS = 'fg_lancamentos';
-const CHAVE_CONFIG = 'fg_config';
+const firebaseConfig = {
+  apiKey: "AIzaSyBktG_UzRi8h_toIm86ubsfIekxCOAiNek",
+  authDomain: "sistema-mamae.firebaseapp.com",
+  databaseURL: "https://sistema-mamae-default-rtdb.firebaseio.com",
+  projectId: "sistema-mamae",
+  storageBucket: "sistema-mamae.firebasestorage.app",
+  messagingSenderId: "521689087171",
+  appId: "1:521689087171:web:6592bff45f116ec35b7676"
+};
 
-function getLancamentos() {
-  return JSON.parse(localStorage.getItem(CHAVE_LANCAMENTOS) || '[]');
-}
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
-function getConfig() {
-  return JSON.parse(localStorage.getItem(CHAVE_CONFIG) || JSON.stringify({
-    socios: ['Sócio 1', 'Sócio 2', 'Sócio 3', 'Sócio 4']
-  }));
-}
-
-function salvarConfig(config) {
-  localStorage.setItem(CHAVE_CONFIG, JSON.stringify(config));
-}
+// ============================================================
+// ESTADO LOCAL (cache dos dados do Firebase)
+// ============================================================
+let lancamentosCache = {};
+let configCache = { socios: ['Sócio 1', 'Sócio 2', 'Sócio 3', 'Sócio 4'] };
+let carregadoLancamentos = false;
+let carregadoConfig = false;
 
 // ============================================================
 // NAVEGAÇÃO DE MÊS
@@ -537,10 +574,15 @@ function setMes(delta) {
 // ============================================================
 function formatarMoeda(valor) {
   return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2
+    style: 'currency', currency: 'USD', minimumFractionDigits: 2
   }).format(valor);
+}
+
+// ============================================================
+// OBTER LISTA DE LANÇAMENTOS DO CACHE
+// ============================================================
+function getLancamentos() {
+  return Object.values(lancamentosCache);
 }
 
 // ============================================================
@@ -559,7 +601,7 @@ function calcularResumo(mes) {
 
 function calcularSocio(nomeSocio, mes) {
   const lancamentos = getLancamentos().filter(l => {
-    const d = new Date(l.criadoEm || l.data);
+    const d = new Date(l.criadoEm);
     return l.socio === nomeSocio && !l.retirado &&
            d.getMonth() === mes && d.getFullYear() === 2026;
   });
@@ -579,7 +621,6 @@ function renderizarCards() {
     const d = new Date(l.criadoEm);
     return !l.retirado && d.getMonth() === mes && d.getFullYear() === 2026;
   });
-
   const nR = todos.filter(l=>l.tipo==='receita').length;
   const nD = todos.filter(l=>l.tipo==='despesa').length;
   const nI = todos.filter(l=>l.tipo==='investimento').length;
@@ -607,13 +648,12 @@ function renderizarGraficoBarras() {
     {mes:6,label:'Jul'},{mes:7,label:'Ago'},{mes:8,label:'Set'},
     {mes:9,label:'Out'},{mes:10,label:'Nov'},{mes:11,label:'Dez'}
   ];
-  const ano = 2026;
   const ALTURA_MAX = 80;
 
   const totais = meses.map(m => {
     const doMes = lancamentos.filter(l => {
       const d = new Date(l.criadoEm);
-      return !l.retirado && d.getFullYear() === ano && d.getMonth() === m.mes;
+      return !l.retirado && d.getFullYear() === 2026 && d.getMonth() === m.mes;
     });
     return {
       receitas: doMes.filter(l=>l.tipo==='receita').reduce((s,l)=>s+l.valor,0),
@@ -643,11 +683,6 @@ function renderizarGraficoBarras() {
       </div>
       <div class="bar-label" style="font-weight:${isMesAtual?'700':'400'};color:${isMesAtual?'var(--text)':'var(--muted)'}">${m.label}</div>
     `;
-    // Hover
-    group.querySelectorAll('.bar').forEach(b => {
-      b.addEventListener('mouseenter', () => { if(!isMesAtual) b.style.opacity='0.85'; });
-      b.addEventListener('mouseleave', () => { if(!isMesAtual) b.style.opacity=op; });
-    });
     container.appendChild(group);
   });
 }
@@ -657,8 +692,7 @@ function renderizarGraficoBarras() {
 // ============================================================
 function renderizarGraficoDonut() {
   const { mes } = getMesAtual();
-  const lancamentos = getLancamentos();
-  const despesasMes = lancamentos.filter(l => {
+  const despesasMes = getLancamentos().filter(l => {
     const d = new Date(l.criadoEm);
     return l.tipo === 'despesa' && !l.retirado && d.getMonth() === mes && d.getFullYear() === 2026;
   });
@@ -687,7 +721,6 @@ function renderizarGraficoDonut() {
     const pct = val / total;
     const dash = pct * circunferencia;
     const cor = cores[i % cores.length];
-    // SVG stroke-dashoffset: começa do topo (rotacionar -90deg)
     circles += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${cor}" stroke-width="7"
       stroke-dasharray="${dash} ${circunferencia - dash}"
       stroke-dashoffset="${circunferencia - offset}"
@@ -707,7 +740,7 @@ function renderizarGraficoDonut() {
   });
 
   container.innerHTML = `
-    <div id="chartDonut" style="display:flex;align-items:center;gap:14px">
+    <div style="display:flex;align-items:center;gap:14px">
       <svg width="80" height="80" viewBox="0 0 70 70" style="transform:rotate(-90deg);flex-shrink:0">
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="7"/>
         ${circles}
@@ -730,18 +763,15 @@ function renderizarExtrato() {
     return d.getMonth() === mes && d.getFullYear() === 2026;
   });
 
-  if (filtroAtual !== 'todos') {
-    lancamentos = lancamentos.filter(l => l.tipo === filtroAtual);
-  }
+  if (filtroAtual !== 'todos') lancamentos = lancamentos.filter(l => l.tipo === filtroAtual);
   if (buscaAtual) {
     const q = buscaAtual.toLowerCase();
     lancamentos = lancamentos.filter(l => l.descricao.toLowerCase().includes(q));
   }
 
-  // Ordenar por data decrescente
   lancamentos.sort((a,b) => new Date(b.criadoEm) - new Date(a.criadoEm));
 
-  // MOBILE — cards
+  // MOBILE
   const lista = document.getElementById('listaLancamentos');
   if (lancamentos.length === 0) {
     lista.innerHTML = `<div class="empty-state">
@@ -755,11 +785,13 @@ function renderizarExtrato() {
       const icone = l.tipo==='receita'?'💰':l.tipo==='despesa'?'📤':'📈';
       const data = new Date(l.criadoEm).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
       const btnRetirar = l.retirado
-        ? `<button class="btn-action restaurar" onclick="retirarLancamento('${l.id}')">Restaurar</button>`
-        : `<button class="btn-action retirar" onclick="retirarLancamento('${l.id}')">Retirar</button>`;
+        ? `<button class="btn-action restaurar" onclick="window._retirar('${l.firebaseKey}')">Restaurar</button>`
+        : `<button class="btn-action retirar" onclick="window._retirar('${l.firebaseKey}')">Retirar</button>`;
       const tagRetirado = l.retirado ? '<span class="tag-retirado">Retirado</span>' : '';
+      const rgbMap = {'var(--green)':'0,212,170','var(--red)':'255,77,106','var(--yellow)':'255,180,0'};
+      const rgb = rgbMap[cor] || '107,128,152';
       return `<div class="card-lancamento${l.retirado?' retirado':''}">
-        <div class="lancamento-icon" style="background:${l.retirado?'rgba(107,128,152,0.15)':'rgba('+hexToRgb(cor)+',0.15)'}">
+        <div class="lancamento-icon" style="background:${l.retirado?'rgba(107,128,152,0.15)':'rgba('+rgb+',0.15)'}">
           <span>${icone}</span>
         </div>
         <div class="lancamento-info">
@@ -772,14 +804,14 @@ function renderizarExtrato() {
           ${tagRetirado}
           <div class="lancamento-actions">
             ${btnRetirar}
-            <button class="btn-action excluir" onclick="excluirLancamento('${l.id}')">Excluir</button>
+            <button class="btn-action excluir" onclick="window._excluir('${l.firebaseKey}')">Excluir</button>
           </div>
         </div>
       </div>`;
     }).join('');
   }
 
-  // DESKTOP — tabela
+  // DESKTOP
   const tbody = document.getElementById('tabelaBody');
   if (lancamentos.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Nenhum lançamento encontrado</td></tr>`;
@@ -790,8 +822,8 @@ function renderizarExtrato() {
       const tipoLabel = l.tipo==='receita'?'💰 Receita':l.tipo==='despesa'?'📤 Despesa':'📈 Investimento';
       const data = new Date(l.criadoEm).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
       const btnRetirar = l.retirado
-        ? `<button class="btn-action restaurar" onclick="retirarLancamento('${l.id}')">Restaurar</button>`
-        : `<button class="btn-action retirar" onclick="retirarLancamento('${l.id}')">Retirar</button>`;
+        ? `<button class="btn-action restaurar" onclick="window._retirar('${l.firebaseKey}')">Restaurar</button>`
+        : `<button class="btn-action retirar" onclick="window._retirar('${l.firebaseKey}')">Retirar</button>`;
       return `<tr class="${l.retirado?'retirado':''}">
         <td><span class="tipo-badge ${tipoCls}">${tipoLabel}</span></td>
         <td style="${l.retirado?'text-decoration:line-through;color:var(--muted)':''}">${escapeHtml(l.descricao)}${l.retirado?' <span class="tag-retirado">Retirado</span>':''}</td>
@@ -802,18 +834,16 @@ function renderizarExtrato() {
         <td>
           <div style="display:flex;gap:4px">
             ${btnRetirar}
-            <button class="btn-action excluir" onclick="excluirLancamento('${l.id}')">Excluir</button>
+            <button class="btn-action excluir" onclick="window._excluir('${l.firebaseKey}')">Excluir</button>
           </div>
         </td>
       </tr>`;
     }).join('');
   }
 
-  // Footer
   const ativos = lancamentos.filter(l=>!l.retirado);
   const saldo = ativos.reduce((s,l) => {
     if(l.tipo==='receita') return s+l.valor;
-    if(l.tipo==='despesa') return s-l.valor;
     return s-l.valor;
   },0);
   document.getElementById('extratoCount').textContent = `Exibindo ${lancamentos.length} lançamento${lancamentos.length!==1?'s':''}`;
@@ -829,16 +859,14 @@ const coresSocios = ['#00D4AA','#FFB400','#A78BFA','#60A5FA'];
 
 function renderizarSocios() {
   const { mes } = getMesAtual();
-  const config = getConfig();
   const grid = document.getElementById('gridSocios');
 
-  grid.innerHTML = config.socios.map((nome, i) => {
+  grid.innerHTML = configCache.socios.map((nome, i) => {
     const dados = calcularSocio(nome, mes);
     const cor = coresSocios[i];
     const iniciais = nome.split(' ').map(p=>p[0]).join('').substring(0,2).toUpperCase();
     const pctReceita = (dados.receitas + dados.despesas) > 0
-      ? Math.round((dados.receitas / (dados.receitas + dados.despesas)) * 100)
-      : 0;
+      ? Math.round((dados.receitas / (dados.receitas + dados.despesas)) * 100) : 0;
     return `<div class="socio-card">
       <div class="socio-header">
         <div class="socio-avatar" style="background:${cor}">${iniciais}</div>
@@ -864,38 +892,37 @@ function renderizarSocios() {
 }
 
 // ============================================================
-// MODAL
+// MODAL — TIPO
 // ============================================================
+let tipoAtual = 'receita';
 const categoriasPorTipo = {
   receita: ['Venda de Produto/Serviço','Outras Receitas'],
-  despesa: ['Compra de Produtos/Insumos','Site','Ferramentas e Softwares','Outras Despesas'],
-  investimento: ['Marketing e Publicidade','Desenvolvimento do Produto','Outros Investimentos']
+  despesa: ['Fornecedores','Salários e Pró-labore','Aluguel e Infraestrutura','Marketing e Publicidade','Impostos e Taxas','Outras Despesas'],
+  investimento: ['Equipamentos','Tecnologia','Expansão','Outras Aplicações']
 };
-
-let tipoAtual = 'receita';
 
 function selecionarTipo(tipo) {
   tipoAtual = tipo;
+  ['receita','despesa','investimento'].forEach(t => {
+    const btn = document.getElementById('btn'+t.charAt(0).toUpperCase()+t.slice(1));
+    const cores = {receita:'var(--green)',despesa:'var(--red)',investimento:'var(--yellow)'};
+    if (t === tipo) {
+      btn.style.borderColor = cores[t];
+      btn.style.color = cores[t];
+      btn.style.background = 'rgba('+{receita:'0,212,170',despesa:'255,77,106',investimento:'255,180,0'}[t]+',0.08)';
+    } else {
+      btn.style.borderColor = '';
+      btn.style.color = '';
+      btn.style.background = '';
+    }
+  });
 
-  document.getElementById('btnReceita').style.background = tipo==='receita' ? 'var(--green)' : 'transparent';
-  document.getElementById('btnReceita').style.color = tipo==='receita' ? '#000' : 'var(--muted)';
-  document.getElementById('btnReceita').style.borderColor = tipo==='receita' ? 'var(--green)' : 'var(--border)';
-
-  document.getElementById('btnDespesa').style.background = tipo==='despesa' ? 'var(--red)' : 'transparent';
-  document.getElementById('btnDespesa').style.color = tipo==='despesa' ? '#fff' : 'var(--muted)';
-  document.getElementById('btnDespesa').style.borderColor = tipo==='despesa' ? 'var(--red)' : 'var(--border)';
-
-  document.getElementById('btnInvestimento').style.background = tipo==='investimento' ? 'var(--yellow)' : 'transparent';
-  document.getElementById('btnInvestimento').style.color = tipo==='investimento' ? '#000' : 'var(--muted)';
-  document.getElementById('btnInvestimento').style.borderColor = tipo==='investimento' ? 'var(--yellow)' : 'var(--border)';
-
-  const selectCategoria = document.getElementById('selectCategoria');
-  selectCategoria.innerHTML = '<option value="" disabled selected>Selecione uma categoria</option>';
+  const select = document.getElementById('selectCategoria');
+  select.innerHTML = '<option value="" disabled selected>Selecione uma categoria</option>';
   categoriasPorTipo[tipo].forEach(cat => {
     const opt = document.createElement('option');
-    opt.value = cat;
-    opt.textContent = cat;
-    selectCategoria.appendChild(opt);
+    opt.value = cat; opt.textContent = cat;
+    select.appendChild(opt);
   });
 
   const placeholders = {
@@ -905,6 +932,8 @@ function selecionarTipo(tipo) {
   };
   document.getElementById('inputDescricao').placeholder = placeholders[tipo];
 }
+
+window.selecionarTipo = selecionarTipo;
 
 function abrirModal() {
   document.getElementById('modalOverlay').classList.add('aberto');
@@ -922,23 +951,21 @@ function limparModal() {
   document.getElementById('inputValor').value = '';
   document.getElementById('inputObs').value = '';
   document.getElementById('selectCategoria').value = '';
-  document.getElementById('inputDescricao').classList.remove('erro');
-  document.getElementById('inputValor').classList.remove('erro');
-  document.getElementById('selectCategoria').classList.remove('erro');
-  document.getElementById('erroDescricao').classList.remove('visivel');
-  document.getElementById('erroValor').classList.remove('visivel');
-  document.getElementById('erroCategoria').classList.remove('visivel');
+  ['inputDescricao','inputValor','selectCategoria'].forEach(id => {
+    document.getElementById(id).classList.remove('erro');
+  });
+  ['erroDescricao','erroValor','erroCategoria'].forEach(id => {
+    document.getElementById(id).classList.remove('visivel');
+  });
   tipoAtual = 'receita';
 }
 
 function popularSelectSociosModal() {
-  const config = getConfig();
   const select = document.getElementById('selectSocio');
   select.innerHTML = '<option value="Geral">Geral (empresa)</option>';
-  config.socios.forEach(nome => {
+  configCache.socios.forEach(nome => {
     const opt = document.createElement('option');
-    opt.value = nome;
-    opt.textContent = nome;
+    opt.value = nome; opt.textContent = nome;
     select.appendChild(opt);
   });
 }
@@ -955,36 +982,26 @@ function mostrarErroCampo(id, erroId) {
 
 function validarModal() {
   let valido = true;
-
-  const descricao = document.getElementById('inputDescricao').value.trim();
-  if (!descricao) {
-    mostrarErroCampo('inputDescricao', 'erroDescricao');
-    valido = false;
+  if (!document.getElementById('inputDescricao').value.trim()) {
+    mostrarErroCampo('inputDescricao', 'erroDescricao'); valido = false;
   }
-
   const valorStr = document.getElementById('inputValor').value.replace(/[^0-9]/g,'');
   if (!valorStr || parseInt(valorStr) === 0) {
-    mostrarErroCampo('inputValor', 'erroValor');
-    valido = false;
+    mostrarErroCampo('inputValor', 'erroValor'); valido = false;
   }
-
-  const categoria = document.getElementById('selectCategoria').value;
-  if (!categoria) {
-    mostrarErroCampo('selectCategoria', 'erroCategoria');
-    valido = false;
+  if (!document.getElementById('selectCategoria').value) {
+    mostrarErroCampo('selectCategoria', 'erroCategoria'); valido = false;
   }
-
   return valido;
 }
 
-function salvarLancamento() {
+async function salvarLancamento() {
   if (!validarModal()) return;
 
   const valorStr = document.getElementById('inputValor').value.replace(/[^0-9]/g,'');
   const valor = parseInt(valorStr) / 100;
 
   const novo = {
-    id: 'lc_' + Date.now() + '_' + Math.random().toString(36).substr(2,5),
     tipo: tipoAtual,
     descricao: document.getElementById('inputDescricao').value.trim(),
     valor: valor,
@@ -996,50 +1013,55 @@ function salvarLancamento() {
     criadoEm: new Date().toISOString()
   };
 
-  const lista = getLancamentos();
-  lista.push(novo);
-  localStorage.setItem(CHAVE_LANCAMENTOS, JSON.stringify(lista));
-
-  fecharModal();
-  renderizarTudo();
-  mostrarToast('Lançamento salvo com sucesso', 'sucesso');
+  try {
+    const lancamentosRef = ref(db, 'lancamentos');
+    await push(lancamentosRef, novo);
+    fecharModal();
+    mostrarToast('Lançamento salvo com sucesso', 'sucesso');
+  } catch(e) {
+    mostrarToast('Erro ao salvar. Verifique a conexão.', 'erro');
+  }
 }
 
 // ============================================================
-// AÇÕES DE LANÇAMENTO
+// AÇÕES DE LANÇAMENTO (Firebase)
 // ============================================================
-function retirarLancamento(id) {
-  const lista = getLancamentos();
-  const idx = lista.findIndex(l => l.id === id);
-  if (idx === -1) return;
-  lista[idx].retirado = !lista[idx].retirado;
-  lista[idx].dataRetirada = lista[idx].retirado ? new Date().toISOString() : null;
-  localStorage.setItem(CHAVE_LANCAMENTOS, JSON.stringify(lista));
-  renderizarTudo();
-  mostrarToast(lista[idx].retirado ? 'Lançamento retirado' : 'Lançamento restaurado', 'sucesso');
-}
+window._retirar = async function(firebaseKey) {
+  const item = lancamentosCache[firebaseKey];
+  if (!item) return;
+  const novoEstado = !item.retirado;
+  try {
+    await update(ref(db, 'lancamentos/' + firebaseKey), {
+      retirado: novoEstado,
+      dataRetirada: novoEstado ? new Date().toISOString() : null
+    });
+    mostrarToast(novoEstado ? 'Lançamento retirado' : 'Lançamento restaurado', 'sucesso');
+  } catch(e) {
+    mostrarToast('Erro ao atualizar. Verifique a conexão.', 'erro');
+  }
+};
 
-function excluirLancamento(id) {
+window._excluir = async function(firebaseKey) {
   if (!window.confirm('Deseja excluir este lançamento permanentemente?')) return;
-  const lista = getLancamentos().filter(l => l.id !== id);
-  localStorage.setItem(CHAVE_LANCAMENTOS, JSON.stringify(lista));
-  renderizarTudo();
-  mostrarToast('Lançamento excluído', 'sucesso');
-}
+  try {
+    await remove(ref(db, 'lancamentos/' + firebaseKey));
+    mostrarToast('Lançamento excluído', 'sucesso');
+  } catch(e) {
+    mostrarToast('Erro ao excluir. Verifique a conexão.', 'erro');
+  }
+};
 
 // ============================================================
-// CONFIGURAÇÕES
+// CONFIGURAÇÕES (Firebase)
 // ============================================================
 function popularSelectSocios(socios) {
-  const config = getConfig();
-  const nomes = socios || config.socios;
-  document.getElementById('nomeSocio1').value = nomes[0] || 'Sócio 1';
-  document.getElementById('nomeSocio2').value = nomes[1] || 'Sócio 2';
-  document.getElementById('nomeSocio3').value = nomes[2] || 'Sócio 3';
-  document.getElementById('nomeSocio4').value = nomes[3] || 'Sócio 4';
+  document.getElementById('nomeSocio1').value = socios[0] || 'Sócio 1';
+  document.getElementById('nomeSocio2').value = socios[1] || 'Sócio 2';
+  document.getElementById('nomeSocio3').value = socios[2] || 'Sócio 3';
+  document.getElementById('nomeSocio4').value = socios[3] || 'Sócio 4';
 }
 
-function salvarConfiguracoes() {
+async function salvarConfiguracoes() {
   const config = {
     socios: [
       document.getElementById('nomeSocio1').value.trim() || 'Sócio 1',
@@ -1048,11 +1070,16 @@ function salvarConfiguracoes() {
       document.getElementById('nomeSocio4').value.trim() || 'Sócio 4'
     ]
   };
-  salvarConfig(config);
-  renderizarTudo();
-  fecharConfig();
-  mostrarToast('Configurações salvas', 'sucesso');
+  try {
+    await set(ref(db, 'config'), config);
+    fecharConfig();
+    mostrarToast('Configurações salvas', 'sucesso');
+  } catch(e) {
+    mostrarToast('Erro ao salvar configurações.', 'erro');
+  }
 }
+
+window.salvarConfiguracoes = salvarConfiguracoes;
 
 function fecharConfig() {
   document.getElementById('painelConfig').classList.remove('aberto');
@@ -1068,10 +1095,7 @@ function exportarCSV() {
   const linhas = lancamentos.map(l => {
     const data = new Date(l.criadoEm).toLocaleString('pt-BR');
     const status = l.retirado ? 'Retirado' : 'Ativo';
-    return [
-      l.tipo, `"${l.descricao}"`, l.categoria, l.socio,
-      data, l.valor.toFixed(2), status, `"${l.observacoes||''}"`
-    ].join(',');
+    return [l.tipo, `"${l.descricao}"`, l.categoria, l.socio, data, l.valor.toFixed(2), status, `"${l.observacoes||''}"`].join(',');
   });
   const csv = '\uFEFF' + [cabecalho, ...linhas].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -1079,22 +1103,27 @@ function exportarCSV() {
   const a = document.createElement('a');
   a.href = url;
   a.download = `financeiro-${new Date().toISOString().split('T')[0]}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
   mostrarToast('Exportação concluída', 'sucesso');
 }
 
+window.exportarCSV = exportarCSV;
+
 // ============================================================
-// APAGAR TODOS
+// APAGAR TODOS (Firebase)
 // ============================================================
-function apagarTodos() {
+async function apagarTodos() {
   if (!window.confirm('Isso irá apagar TODOS os lançamentos permanentemente. Tem certeza?')) return;
-  localStorage.removeItem(CHAVE_LANCAMENTOS);
-  renderizarTudo();
-  mostrarToast('Todos os dados foram apagados', 'sucesso');
+  try {
+    await remove(ref(db, 'lancamentos'));
+    mostrarToast('Todos os dados foram apagados', 'sucesso');
+  } catch(e) {
+    mostrarToast('Erro ao apagar dados.', 'erro');
+  }
 }
+
+window.apagarTodos = apagarTodos;
 
 // ============================================================
 // TOAST
@@ -1117,17 +1146,6 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function hexToRgb(cssVar) {
-  // Para variáveis CSS, retornar valores RGB fixos
-  const map = {
-    'var(--green)': '0,212,170',
-    'var(--red)': '255,77,106',
-    'var(--yellow)': '255,180,0',
-    'var(--muted)': '107,128,152'
-  };
-  return map[cssVar] || '107,128,152';
-}
-
 // ============================================================
 // RENDER TUDO
 // ============================================================
@@ -1140,37 +1158,93 @@ function renderizarTudo() {
 }
 
 // ============================================================
-// EVENT LISTENERS
+// VERIFICAR LOADING CONCLUÍDO
+// ============================================================
+function verificarCarregamento() {
+  if (carregadoLancamentos && carregadoConfig) {
+    document.getElementById('loadingScreen').style.display = 'none';
+    renderizarTudo();
+    mostrarStatusOnline(true);
+  }
+}
+
+function mostrarStatusOnline(online) {
+  const el = document.getElementById('statusOnline');
+  const dot = document.getElementById('dotOnline');
+  const texto = document.getElementById('textoOnline');
+  if (online) {
+    el.classList.remove('offline'); dot.classList.remove('offline');
+    texto.textContent = 'Sincronizado';
+  } else {
+    el.classList.add('offline'); dot.classList.add('offline');
+    texto.textContent = 'Sem conexão';
+  }
+  el.classList.add('visivel');
+  clearTimeout(el._timer);
+  if (online) {
+    el._timer = setTimeout(() => el.classList.remove('visivel'), 2500);
+  }
+}
+
+// ============================================================
+// LISTENERS FIREBASE (tempo real)
+// ============================================================
+// Escutar lançamentos
+onValue(ref(db, 'lancamentos'), (snapshot) => {
+  const data = snapshot.val();
+  lancamentosCache = {};
+  if (data) {
+    Object.entries(data).forEach(([key, val]) => {
+      lancamentosCache[key] = { ...val, firebaseKey: key };
+    });
+  }
+  if (!carregadoLancamentos) {
+    carregadoLancamentos = true;
+    verificarCarregamento();
+  } else {
+    renderizarTudo();
+    mostrarStatusOnline(true);
+  }
+}, (error) => {
+  mostrarStatusOnline(false);
+  document.getElementById('loadingScreen').style.display = 'none';
+});
+
+// Escutar config
+onValue(ref(db, 'config'), (snapshot) => {
+  const data = snapshot.val();
+  if (data && data.socios) {
+    configCache = data;
+    popularSelectSocios(configCache.socios);
+  }
+  if (!carregadoConfig) {
+    carregadoConfig = true;
+    verificarCarregamento();
+  } else {
+    renderizarSocios();
+  }
+});
+
+// ============================================================
+// EVENT LISTENERS DOM
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-  // Mês padrão: mês atual (dentro de 2026)
   const hoje = new Date();
-  mesAtual = (hoje.getFullYear() === 2026) ? hoje.getMonth() : 0;
+  mesAtual = (hoje.getFullYear() === 2026) ? hoje.getMonth() : 2;
   document.getElementById('labelMes').textContent = nomesMeses[mesAtual] + ' 2026';
 
-  // Carregar config e popular sócios
-  const config = getConfig();
-  popularSelectSocios(config.socios);
-
-  // Renderizar tudo
-  renderizarTudo();
-
-  // Navegação de mês
   document.getElementById('btnMesAnterior').addEventListener('click', () => setMes(-1));
   document.getElementById('btnMesProximo').addEventListener('click', () => setMes(1));
 
-  // Modal
   document.getElementById('btnNovoLancamento').addEventListener('click', abrirModal);
   document.getElementById('btnFecharModal').addEventListener('click', fecharModal);
   document.getElementById('btnCancelarModal').addEventListener('click', fecharModal);
   document.getElementById('btnSalvarLancamento').addEventListener('click', salvarLancamento);
 
-  // Fechar modal ao clicar fora
   document.getElementById('modalOverlay').addEventListener('click', function(e) {
     if (e.target === this) fecharModal();
   });
 
-  // Configurações
   const btnConfig = document.getElementById('btnConfig');
   const painelConfig = document.getElementById('painelConfig');
   const overlayConfig = document.getElementById('overlayConfig');
@@ -1188,7 +1262,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btnFecharConfig').addEventListener('click', fecharConfig);
 
-  // Formatação do valor
   document.getElementById('inputValor').addEventListener('input', function() {
     let nums = this.value.replace(/\D/g,'');
     if (!nums) { this.value = ''; return; }
@@ -1196,7 +1269,6 @@ document.addEventListener('DOMContentLoaded', () => {
     this.value = '$' + valor.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   });
 
-  // Filtros
   document.querySelectorAll('.pill').forEach(pill => {
     pill.addEventListener('click', function() {
       document.querySelectorAll('.pill').forEach(p => p.classList.remove('ativo'));
@@ -1206,11 +1278,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Busca
   document.getElementById('inputBusca').addEventListener('input', function() {
     buscaAtual = this.value;
     renderizarExtrato();
   });
+
+  // Detectar conexão
+  window.addEventListener('online', () => mostrarStatusOnline(true));
+  window.addEventListener('offline', () => mostrarStatusOnline(false));
 });
 </script>
 </body>
